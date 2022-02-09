@@ -1,31 +1,53 @@
-# CMake object libraries
+# Making a shared library from a collection of sub libraries
 
-When you link a binary against an object file (`.o`), everything in that object file becomes part of that binary.
-However, when you link against a static library (`.a` / `.lib`), only the things you actually *use* become part of the
-binary.
+Let's say you have a bunch of static libraries that you want to bundle up and ship as a shared library. Something like
+this:
 
-Normally in CMake, a binary is built up from static libraries, and only what is used from the libraries gets included in
-the binary. By using CMake **object libraries**, you can change that, so *all* the contents of the libraries get
-included in the binary. This is useful if you for instance want to build a shared library which is just a combination on
-a bunch of static libraries.
+```
+   |------|
+   |shared|
+   |------|
+    /    \
+|----|  |----|
+|lib1|  |lib2|
+|----|  |----|
+```
+
+In order for that to work, there is some normally useful behaviour of the linker that we need to overcome, in order for
+all the symbols of the sub libraries to actually be included in the final shared library.
+
+When you link a binary (an executable or a shared library) against an object file (`.o`), everything in that object file
+becomes part of the binary. However, when you link a binary against a *static* library (`.a` / `.lib`), only the things
+you actually *use* become part of the binary. The rest can be omitted, resulting in a (sometimes much) smaller binary.
+
+However, if your binary is a shared library which will serve as a bundle of all the sub libraries, this can become
+problematic. If there is a function in one of the sub libraries which is supposed to be part of the interface of the
+shared library, but it is not actually *used* (directly or transitively) by the shared library, the linker will just
+omit it, assuming that it's not needed.
+
+This article looks at two possible ways of solving that issue, to make sure all the functions from the sub libraries
+become included in the shared library.
 
 ## The difference between linking to object files and linking to static libraries
 
-As an example, say you have a static library [StaticLib](object-libs/src/StaticLib/CMakeLists.txt), with two source files:
+As an example, say you have a static library [StaticLib](object-libs/src/StaticLib/CMakeLists.txt), with two source
+files:
 
 ```cmake
 project(StaticLib)
 add_library(${PROJECT_NAME} STATIC staticLib1.cpp staticLib2.cpp)
 ```
 
-In [staticLib1.cpp](object-libs/src/StaticLib/staticLib1.cpp) we define two functions `staticLib1a()` and `staticLib1b()`:
+In [staticLib1.cpp](object-libs/src/StaticLib/staticLib1.cpp) we define two functions `staticLib1a()`
+and `staticLib1b()`:
 
 ```c++
 void staticLib1a() {}
 void staticLib1b() {}
 ```
 
-In [staticLib2.cpp](object-libs/src/StaticLib/staticLib2.cpp) we define two functions `staticLib2a()` and `staticLib2b()`:
+In [staticLib2.cpp](object-libs/src/StaticLib/staticLib2.cpp) we define two functions `staticLib2a()`
+and `staticLib2b()`:
 
 ```c++
 void staticLib2a() {}
@@ -60,8 +82,8 @@ $ nm -C clion-debug/Main/Main | grep staticLib
 ```
 
 Based on the opening paragraph in this article, you probably correctly expected to not see `staticLib2a()`
-and `staticLib2b()` here, since they are not referenced in `main.cpp`. You probably also guessed that you'd
-see `staticLib1a()` here, since that one is called from `main()`. But why is `staticLib1b()` there?
+and `staticLib2b()` here, since they are not referenced (directly or transitively) from `main.cpp`. You probably also
+guessed that you'd see `staticLib1a()` here, since that one is called from `main()`. But why is `staticLib1b()` there?
 
 Let's first quickly look at how a linker works. `Main` links to `main.o`, which contains `main()`. It also links
 to `libStaticLib.a`, which contains all the `staticLib...` functions. The linker now reads through `main.o` and includes
@@ -141,8 +163,16 @@ references `staticLib2a` nor `staticLib2b`, the definitions of those functions w
 and the consumers of it will not be able to use them!
 
 In this case, we need to tell the linker to include all symbols from the linked to libraries, just as it would if we
-were linking directly to object files rather than to static libraries. And what better way to do that than to actually
-*do* link to object files? This is where CMake's "Object libraries" come in.
+were linking directly to object files rather than to static libraries. There are (at least) two ways to solve this:
+
+- CMake object libraries
+- Using `--whole-archive`
+
+It's probably also possible to solve this with linker scripts, and approach I didn't try.
+
+## CMake object libraries
+
+One seemingly very promising solution to this is to use CMake's "Object libraries".
 
 In a normal static library, each `*.cpp` / `*.c` file turns into one `*.o` file. Then all of those are concatenated into
 a `*.a`. Given this [CMakeLists.txt](object-libs/src/StaticLib/CMakeLists.txt):
@@ -163,9 +193,10 @@ StaticLib/libStaticLib.a
 
 Two object files (`*.o`), and one archive file (`*.a`) containing the two object files.
 
-Let's make a new project [ObjectLib](object-libs/src/ObjectLib), which is identical to [StaticLib](object-libs/src/StaticLib), except that the
-files are named `objectLib*` instead of `staticLib*`, and the four functions are named `objectLib[12][ab]` instead
-of `staticLib[12][ab]`. We also make this an object library, by simply passing `OBJECT` instead of `STATIC`
+Let's make a new project [ObjectLib](object-libs/src/ObjectLib), which is identical
+to [StaticLib](object-libs/src/StaticLib), except that the files are named `objectLib*` instead of `staticLib*`, and the
+four functions are named `objectLib[12][ab]` instead of `staticLib[12][ab]`. We also make this an object library, by
+simply passing `OBJECT` instead of `STATIC`
 to `add_library`, like in [CMakeLists.txt](object-libs/src/ObjectLib/CMakeLists.txt):
 
 ```cmake
@@ -181,7 +212,7 @@ $ find ObjectLib/ -name '*.o' -o -name '*.a'|xargs ls -l
 -rw-rw-r-- 1 knatten knatten 3200 feb.   2 14:42 ObjectLib/CMakeFiles/ObjectLib.dir/objectLib2.cpp.o
 ```
 
-Linking to an object library works exactly like linking to a static library.
+Linking to an object library works exactly (so far, but see below for a problem) like linking to a static library.
 In [object-libs/src/SharedLib/CMakeLists.txt](object-libs/src/SharedLib/CMakeLists.txt):
 
 ```cmake
@@ -216,17 +247,48 @@ $ nm -C SharedLib/libSharedLib.so | grep -E \(object\|static\)Lib
 We can see that all the functions from the object library were included, but only the needed functions (and functions
 that happened to be in the same section as needed functions) from the static library.
 
-So if you want to build a shared library from a bunch of static libraries, object libraries might be the way to go.
-
-## Problems
+### Problems with object libraries
 
 Normally, if a static library `lib1` depends on `lib2`, and you link a binary `bin` against `lib1`, you get both `lib1`
 and `lib2` passed to the linker for `bin`, which is what you want. For object libraries, you only get `lib1` on the
 command line. So in case of a dependency tree, this does not work well at all.
+
+```
+|----|
+|bin1|
+|----|
+  |
+|----|
+|lib1|
+|----|
+  |
+|----|
+|lib2|
+|----|
+```
+
+In the figure above, `bin1` links to both `lib1` and `lib2` in the case of static libraries, but only to `lib1` in the
+case of object libraries!
 
 This has been a known problem for years, for instance
 in [this issue](https://gitlab.kitware.com/cmake/cmake/-/issues/18090). What's holding them back is that it's an error
 to link twice to the same symbol in `.o` files, but if you link twice to the same symbol in `.a` files, it just picks
 the first one it finds. So if `lib1` and `lib2` both depend on `lib3`, it's no problem to link a binary `bin` which
 depends on `lib1` and `lib2` and then gets `lib3` from both of them. But if these are all object libraries, `bin` now
-gets the object files from `lib3` passed multiple times, which is an error.
+gets the object files from `lib3` passed multiple times, which is an error. Figure:
+
+```
+   |------|
+   |shared|
+   |------|
+    /    \
+|----|  |----|
+|lib1|  |lib2|
+|----|  |----|
+    \   /
+    |----|
+    |lib3|
+    |----|
+```
+
+## Using `--whole-archive`
