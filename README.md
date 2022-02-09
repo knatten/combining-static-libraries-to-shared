@@ -291,4 +291,121 @@ gets the object files from `lib3` passed multiple times, which is an error. Figu
     |----|
 ```
 
+There are some workarounds to this listed in the issue, but they don't seem to be working very well. Let's investigate
+our second option:
+
 ## Using `--whole-archive`
+
+`man ld` says it best:
+
+> --whole-archive
+>
+> For each archive mentioned on the command line after the `--whole-archive` option, include every object file in the
+> archive in the link, rather than searching the archive for the required object files. *This is normally used to turn
+> an archive file into a shared library* [my emphasis]
+
+This sounds like exactly what we want. We just have to make sure to turn it off again, so we only enable it for our own
+sub libraries, and not for instance all of boost which we might only be using a few functions from. Again, `man ld`:
+
+> --no-whole-archive
+>
+>   Turn off the effect of the `--whole-archive` option for subsequent archive files.
+
+So we need to convince CMake to output a linker command which puts all the sub libraries of our shared library
+between `--whole-archive` and `--no-whole-archive`, and other libraries out of those.
+
+Let's look at a similar project to the previous one. This time we're trying to make a `SharedLib` from the static
+library `SharedLibWithChild` and its child `SharedLibChild`:
+
+```
+    |---------|
+    |SharedLib|
+    |---------|
+         |
+|------------------|
+|SharedLibWithChild|
+|------------------|
+         |
+  |--------------|
+  |SharedLibChild|
+  |--------------|
+```
+
+This project is similar to the previous one, in that `StaticLibWithChild` has two source files with two functions each:
+In [staticLibWithChild1.cpp](whole-archive/src/StaticLibWithChild/staticLibWithChild1.cpp):
+
+```c++
+void staticLibWithChild1a() { staticLibChild1a(); }
+void staticLibWithChild1b() {}
+```
+
+In [staticLibWithChild2.cpp](whole-archive/src/StaticLibWithChild/staticLibWithChild2.cpp):
+
+```c++
+void staticLibWithChild2a() {}
+void staticLibWithChild2b() {}
+```
+
+Then we also have `StaticLibChild` with two source files:
+
+In [staticLibChild1.cpp](whole-archive/src/StaticLibChild/staticLibChild1.cpp):
+
+```c++
+void staticLibChild1a() {}
+void staticLibChild1b() {}
+```
+
+In [staticLibChild2.cpp](whole-archive/src/StaticLibChild/staticLibChild2.cpp):
+
+```c++
+void staticLibChild2a() {}
+void staticLibChild2b() {}
+```
+
+Then in [SharedLib/sharedLib.cpp](whole-archive/src/SharedLib/sharedLib.cpp), we use `staticLibWithChild1a`:
+
+```c++
+void sharedLib() {
+    staticLibWithChild1a();
+}
+```
+
+Notice that `staticLibWithChild1a` calls `staticLibChild1a` from the lowermost library, but none of the other functions
+in the static libs call anything. So `staticLibChild1a` is transitively needed by `SharedLib`, but neither of the other
+functions are.
+
+[SharedLib](whole-archive/src/SharedLib/CMakeLists.txt) depends on `StaticLibWithChild`:
+
+```cmake
+project(SharedLib)
+
+add_library(${PROJECT_NAME} SHARED sharedLib.cpp)
+target_link_libraries(${PROJECT_NAME} PUBLIC StaticLibWithChild)
+```
+
+This works, `SharedLib` now depends on `StaticLibWithChild`, but also on `StaticLibChild`, since `StaticLibWithcChild`
+depends on `StaticLibChild` publicly:
+
+[StaticLibWithChild](whole-archive/src/StaticLibWithChild/CMakeLists.txt):
+
+```cmake
+target_link_libraries(${PROJECT_NAME} PUBLIC StaticLibChild)
+```
+
+So when we link `SharedLib` and list the included symbols, we get:
+
+```
+$ nm -C whole-archive/clion-debug/SharedLib/libSharedLib.so |grep staticLib
+0000000000001164 T staticLibChild1a()
+000000000000116f T staticLibChild1b()
+0000000000001149 T staticLibWithChild1a()
+0000000000001159 T staticLibWithChild1b()
+```
+
+This is similar to what we've seen before. `staticLibWithChild1a` is called from `SharedLib`, so it gets included in the
+binary. `staticLibWithChild1b` gets included because it's in the same section as `staticLibWithChild1a`
+. `staticLibChild1a` gets included because it's called from `staticLibWithChild1a`, even though it's not called directly
+from anywhere in `SharedLib` itself. And `staticLibChild1b` gets included because it's in the same section.
+
+The functions ending in `2` are not included since they're never called from `SharedLib`, neither directly nor
+transitively.
