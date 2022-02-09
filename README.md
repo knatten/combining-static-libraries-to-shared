@@ -217,3 +217,16 @@ We can see that all the functions from the object library were included, but onl
 that happened to be in the same section as needed functions) from the static library.
 
 So if you want to build a shared library from a bunch of static libraries, object libraries might be the way to go.
+
+## Problems
+
+Normally, if a static library `lib1` depends on `lib2`, and you link a binary `bin` against `lib1`, you get both `lib1`
+and `lib2` passed to the linker for `bin`, which is what you want. For object libraries, you only get `lib1` on the
+command line. So in case of a dependency tree, this does not work well at all.
+
+This has been a known problem for years, for instance
+in [this issue](https://gitlab.kitware.com/cmake/cmake/-/issues/18090). What's holding them back is that it's an error
+to link twice to the same symbol in `.o` files, but if you link twice to the same symbol in `.a` files, it just picks
+the first one it finds. So if `lib1` and `lib2` both depend on `lib3`, it's no problem to link a binary `bin` which
+depends on `lib1` and `lib2` and then gets `lib3` from both of them. But if these are all object libraries, `bin` now
+gets the object files from `lib3` passed multiple times, which is an error.
