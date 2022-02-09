@@ -11,28 +11,28 @@ a bunch of static libraries.
 
 ## The difference between linking to object files and linking to static libraries
 
-As an example, say you have a static library [StaticLib](src/StaticLib/CMakeLists.txt), with two source files:
+As an example, say you have a static library [StaticLib](object-libs/src/StaticLib/CMakeLists.txt), with two source files:
 
 ```cmake
 project(StaticLib)
 add_library(${PROJECT_NAME} STATIC staticLib1.cpp staticLib2.cpp)
 ```
 
-In [staticLib1.cpp](src/StaticLib/staticLib1.cpp) we define two functions `staticLib1a()` and `staticLib1b()`:
+In [staticLib1.cpp](object-libs/src/StaticLib/staticLib1.cpp) we define two functions `staticLib1a()` and `staticLib1b()`:
 
 ```c++
 void staticLib1a() {}
 void staticLib1b() {}
 ```
 
-In [staticLib2.cpp](src/StaticLib/staticLib2.cpp) we define two functions `staticLib2a()` and `staticLib2b()`:
+In [staticLib2.cpp](object-libs/src/StaticLib/staticLib2.cpp) we define two functions `staticLib2a()` and `staticLib2b()`:
 
 ```c++
 void staticLib2a() {}
 void staticLib2b() {}
 ```
 
-Let's say you're also building an executable [Main](src/Main/CMakeLists.txt):
+Let's say you're also building an executable [Main](object-libs/src/Main/CMakeLists.txt):
 
 ```cmake
 project(Main)
@@ -40,7 +40,7 @@ add_executable(${PROJECT_NAME} main.cpp)
 target_link_libraries(${PROJECT_NAME} StaticLib)
 ```
 
-And in [main.cpp](src/Main/main.cpp) we call `staticLib1a()` from `StaticLib`:
+And in [main.cpp](object-libs/src/Main/main.cpp) we call `staticLib1a()` from `StaticLib`:
 
 ```c++
 #include "staticLib1.h"
@@ -145,7 +145,7 @@ were linking directly to object files rather than to static libraries. And what 
 *do* link to object files? This is where CMake's "Object libraries" come in.
 
 In a normal static library, each `*.cpp` / `*.c` file turns into one `*.o` file. Then all of those are concatenated into
-a `*.a`. Given this [CMakeLists.txt](src/StaticLib/CMakeLists.txt):
+a `*.a`. Given this [CMakeLists.txt](object-libs/src/StaticLib/CMakeLists.txt):
 
 ```cmake
 project(StaticLib)
@@ -163,10 +163,10 @@ StaticLib/libStaticLib.a
 
 Two object files (`*.o`), and one archive file (`*.a`) containing the two object files.
 
-Let's make a new project [ObjectLib](src/ObjectLib), which is identical to [StaticLib](src/StaticLib), except that the
+Let's make a new project [ObjectLib](object-libs/src/ObjectLib), which is identical to [StaticLib](object-libs/src/StaticLib), except that the
 files are named `objectLib*` instead of `staticLib*`, and the four functions are named `objectLib[12][ab]` instead
 of `staticLib[12][ab]`. We also make this an object library, by simply passing `OBJECT` instead of `STATIC`
-to `add_library`, like in [CMakeLists.txt](src/ObjectLib/CMakeLists.txt):
+to `add_library`, like in [CMakeLists.txt](object-libs/src/ObjectLib/CMakeLists.txt):
 
 ```cmake
 project(ObjectLib)
@@ -182,7 +182,7 @@ $ find ObjectLib/ -name '*.o' -o -name '*.a'|xargs ls -l
 ```
 
 Linking to an object library works exactly like linking to a static library.
-In [src/SharedLib/CMakeLists.txt](src/SharedLib/CMakeLists.txt):
+In [object-libs/src/SharedLib/CMakeLists.txt](object-libs/src/SharedLib/CMakeLists.txt):
 
 ```cmake
 target_link_libraries(${PROJECT_NAME} StaticLib)
