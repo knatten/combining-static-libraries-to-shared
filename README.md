@@ -409,3 +409,25 @@ from anywhere in `SharedLib` itself. And `staticLibChild1b` gets included becaus
 
 The functions ending in `2` are not included since they're never called from `SharedLib`, neither directly nor
 transitively.
+
+## TODO
+
+- Ensure that build order is enforced. When linking to a library target name, build order will be enforced. I'm not sure
+  that this happens for generator expressions
+- Ensure that rebuilds are enforced when dependencies change. When linking to a library target name, rebuilds are
+  enforced. I'm not sure that this happens for generator expressions
+- Make sure we get the correct include directories set. I'm not sure that this happens for generator expressions.
+- Note, the INTERFACE_LINK_LIBRARIES property of a target does not seem to include the target itself.
+- Note, it seems to work to put a library both inside --whole-archive and after it, but not before it. Makes sense since
+  it will then have resolved symbols and then find them again and being asked to include all of them. Check on Windows
+  too
+- Note, maybe it's a good idea to have two calls to target_link_libraries, one with the ones we actually depend on, so
+  that we get include directories and build order guaranteed (at least the former seems to be needed), and one for the
+  whole-archive stuff. As long as we put the whole-archive stuff first, it seems to work fine, at least on Linux. Then
+  the whole archive thing can also be PRIVATE. And it's nice that we can simply add a bunch of these in a loop when we
+  know which public dependencies exist.
+- Note, https://cmake.org/cmake/help/latest/command/target_link_libraries.html says that one can
+  call `target_link_libraries` from another directory than the one the target was created in. So we can do this from a
+  function somewhere probably! As long as the shared library target has been created before we do it of course.
+- Maybe see in zivid-sdk if I can simply iterate over EXPOSED_LIBRARIES in Core and do this trick and see if it just
+  works?
